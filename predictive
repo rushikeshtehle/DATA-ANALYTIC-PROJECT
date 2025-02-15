@@ -1,0 +1,505 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.express as px
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.feature_extraction.text import CountVectorizer
+import xgboost as xgb
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_auc_score, roc_curve
+
+import warnings
+warnings.filterwarnings("ignore")
+
+data = pd.read_csv(r"C:\Users\rushi\Downloads\loan_data.csv")
+data.head()
+
+data.shape
+
+data.dtypes
+
+(data.isnull().sum()/(data.shape[0]*data.shape[1]))*100
+
+(data.duplicated().sum())*100
+
+data.describe()
+
+
+numeric_data = data.select_dtypes(include=['float64', 'int64'])
+                                  
+correlation_matrix = numeric_data.corr()
+
+plt.figure(figsize=(8, 4))
+sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", fmt=".2f", linewidths=0.5)
+plt.title("Correlation Heatmap")
+plt.show()
+
+
+threshold = 0.8
+
+high_corr = correlation_matrix[(correlation_matrix >= threshold) & (correlation_matrix < 1.0)]
+
+high_corr_pairs = high_corr.stack().reset_index()
+high_corr_pairs.columns = ['Feature 1', 'Feature 2', 'Correlation']
+high_corr_pairs = high_corr_pairs.sort_values(by='Correlation', ascending=False)
+
+print("Highly Correlated Feature Pairs (Threshold > 0.8):")
+print(high_corr_pairs)
+
+plt.figure(figsize=(8, 4))
+sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", fmt=".2f", linewidths=0.5, 
+            mask=~(correlation_matrix.abs() >= threshold))
+plt.title("Heatmap with Highlighted High Correlations")
+plt.show()
+
+
+data_numeric = data.select_dtypes(include=[np.number])
+
+
+correlation_matrix_before = data_numeric.corr()
+
+
+threshold = 0.8
+
+
+high_corr_pairs = correlation_matrix_before.abs().unstack().reset_index()
+high_corr_pairs.columns = ["Feature 1", "Feature 2", "Correlation"]
+high_corr_pairs = high_corr_pairs[(high_corr_pairs["Feature 1"] != high_corr_pairs["Feature 2"]) & 
+                                  (high_corr_pairs["Correlation"] > threshold)]
+
+
+high_corr_pairs = high_corr_pairs[high_corr_pairs["Feature 1"] < high_corr_pairs["Feature 2"]]
+
+
+drop_features = high_corr_pairs["Feature 2"].unique()
+data_cleaned = data_numeric.drop(columns=drop_features)
+
+
+correlation_matrix_after = data_cleaned.corr()
+
+
+plt.figure(figsize=(8, 4))
+sns.heatmap(correlation_matrix_after, annot=True, cmap="coolwarm", fmt=".2f", linewidths=0.5)
+plt.title("Heatmap After Removing Multicollinearity")
+plt.show()
+
+
+print(f"Dropped features to reduce multicollinearity: {drop_features}")
+
+
+numeric_columns = data.select_dtypes(include=['float64', 'int64']).columns
+numeric_columns = ['person_age', 'person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
+
+
+num_cols = 3  
+num_rows = -(-len(numeric_columns) // num_cols)  
+
+
+fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 4))
+axes = axes.flatten()  
+
+
+for i, col in enumerate(numeric_columns):
+    sns.histplot(data[col], kde=True, bins=30, ax=axes[i])
+    axes[i].set_title(f"Distribution of {col}")
+    axes[i].set_xlabel(col)
+    axes[i].set_ylabel("Frequency")
+
+
+for i in range(len(numeric_columns), len(axes)):
+    fig.delaxes(axes[i])
+
+plt.tight_layout()
+plt.show()
+
+
+fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 4))
+axes = axes.flatten()  
+numeric_columns_box = ['person_age', 'person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
+for i, col in enumerate(numeric_columns_box):
+    sns.boxplot(x=data[col], ax=axes[i])
+    axes[i].set_title(f"Box Plot of {col}")
+    axes[i].set_xlabel(col)
+
+
+for i in range(len(numeric_columns_box), len(axes)):
+    fig.delaxes(axes[i])
+
+plt.tight_layout()
+plt.show()
+
+
+categorical_columns = data.select_dtypes(include=['object']).columns
+
+
+num_cols = 3 
+num_rows = -(-len(categorical_columns) // num_cols) 
+
+fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 4))
+axes = axes.flatten()  
+
+
+for i, col in enumerate(categorical_columns):
+    data[col].value_counts().plot.pie(
+        autopct='%1.1f%%', startangle=90, cmap='viridis', ax=axes[i]
+    )
+    axes[i].set_title(f"Pie Chart of {col}")
+    axes[i].set_ylabel("") 
+
+
+for i in range(len(categorical_columns), len(axes)):
+    fig.delaxes(axes[i])
+    
+plt.tight_layout()
+plt.show()
+
+
+
+numeric_features = data.select_dtypes(include=['float64', 'int64']).columns
+numeric_features = ['person_age', 'person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
+
+
+Q1 = data[numeric_features].quantile(0.25)  
+Q3 = data[numeric_features].quantile(0.75) 
+IQR = Q3 - Q1 
+
+
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+
+
+outliers = ((data[numeric_features] < lower_bound) | (data[numeric_features] > upper_bound)).any(axis=1)
+
+
+data_no_outliers = data[~outliers]
+
+print(f"Number of outliers removed: {outliers.sum()}")
+print(f"Data shape after removing outliers: {data_no_outliers.shape}")
+
+
+numeric_features = ['person_age', 'person_income', 'person_emp_exp', 'loan_amnt', 'loan_int_rate', 'loan_percent_income', 'cb_person_cred_hist_length', 'credit_score']
+
+for column in numeric_features:
+    fig, axes = plt.subplots(1, 2, figsize=(7, 2))  
+    
+    
+    sns.boxplot(x=data[column], ax=axes[0], color='lightblue')
+    axes[0].set_title(f"Before Outlier Removal: {column}")
+
+   
+    sns.boxplot(x=data_no_outliers[column], ax=axes[1], color='lightgreen')
+    axes[1].set_title(f"After Outlier Removal: {column}")
+
+ 
+    plt.tight_layout()
+    
+    plt.show()
+
+
+skewed_features = data[numeric_features].apply(lambda x: skew(x.dropna()))
+skewed_features = skewed_features[abs(skewed_features) > 0.75]  
+
+
+for feature in skewed_features.index:
+    fig, axes = plt.subplots(1, 2, figsize=(7, 2))  
+
+    
+    sns.histplot(data[feature], ax=axes[0], kde=True, color='lightblue', bins=30)
+    axes[0].set_title(f"Before Transformation: {feature}")
+
+    
+    if (data[feature] > 0).all():
+        transformed_data = np.log1p(data[feature])
+    else:
+        transformed_data = np.sign(data[feature]) * np.log1p(abs(data[feature]))  
+
+  
+    sns.histplot(transformed_data, ax=axes[1], kde=True, color='lightgreen', bins=30)
+    axes[1].set_title(f"After Transformation: {feature}")
+
+   
+    plt.tight_layout()
+    
+  
+    plt.show()
+
+
+pd.DataFrame(data_no_outliers['loan_status'].value_counts()).rename({"loan_status":"Counts"}, axis = 1).rename_axis("loan_status")
+
+
+print("Columns in the dataset:")
+print(data.columns)
+
+
+categorical_columns = ['person_gender', 'person_education', 'person_home_ownership', 
+                       'loan_intent', 'previous_loan_defaults_on_file']
+
+
+categorical_columns = [col for col in categorical_columns if col in data.columns]
+
+
+encoded_data = pd.get_dummies(data, columns=categorical_columns, drop_first=True)
+
+print("Data after one-hot encoding:")
+print(encoded_data.head())
+
+
+X = data_no_outliers.drop(columns=['loan_status'])  
+y = data_no_outliers['loan_status'] 
+
+
+categorical_columns = ["person_gender", 'loan_status', "person_education", "person_home_ownership", "loan_intent", "previous_loan_defaults_on_file"]
+
+
+fig, axes = plt.subplots(nrows=1, ncols=len(categorical_columns), figsize=(20, 4))
+
+
+for ax, col in zip(axes, categorical_columns):
+    sns.countplot(y=data[col], palette="viridis", order=data[col].value_counts().index, ax=ax)
+    ax.set_title(f"Bar Plot of {col}")
+    ax.set_xlabel("Count")
+    ax.set_ylabel(col)
+
+
+plt.tight_layout()
+plt.show()
+
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+
+print("X_train shape:", X_train.shape)
+print("X_test shape:", X_test.shape)
+print("y_train shape:", y_train.shape)
+print("y_test shape:", y_test.shape)
+
+
+
+from sklearn.preprocessing import LabelEncoder
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+
+
+label_encoder = LabelEncoder()
+
+categorical_columns = data.select_dtypes(include=['object']).columns
+for col in categorical_columns:
+    data[col] = label_encoder.fit_transform(data[col])
+
+X = data.drop('loan_status', axis=1) 
+y = data['loan_status']  
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+print("Class distribution in y_train before SMOTE:", Counter(y_train))
+
+if len(set(y_train)) > 1:
+    smote = SMOTE(random_state=42)
+    X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
+    print("Class distribution after SMOTE:", Counter(y_train_smote))
+else:
+    print("y_train has only one class, SMOTE cannot be applied.")
+
+
+from sklearn.feature_selection import mutual_info_classif
+
+MI_re = mutual_info_classif(X_train, y_train)
+MI_re
+
+
+MI_re = pd.Series(MI_re)
+MI_re.index = X_train.columns
+MI_re.sort_values(ascending=False)
+
+
+MI_re.sort_values(ascending=False).plot.bar(figsize=(20, 8))
+plt.xticks(fontsize=15)
+plt.yticks(fontsize=15)
+
+
+from sklearn.preprocessing import MinMaxScaler
+
+scaler = MinMaxScaler()
+
+data_no_outliers[numeric_features] = scaler.fit_transform(data_no_outliers[numeric_features])
+
+print("Data after Min-Max Scaling:")
+print(data_no_outliers.head())
+
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+
+top_11_features = [
+    'previous_loan_defaults_on_file', 'loan_int_rate', 'loan_intent', 
+    'person_income', 'loan_percent_income', 'person_home_ownership', 
+    'person_education', 'person_gender', 'cb_person_cred_hist_length', 
+    'loan_amnt', 'credit_score'
+]
+
+X = data_no_outliers[top_11_features].copy()  
+y = data_no_outliers['loan_status']
+
+if y.dtype == 'object':
+    y = LabelEncoder().fit_transform(y)
+
+categorical_cols = ['loan_intent', 'person_home_ownership', 'person_education', 'person_gender', 'previous_loan_defaults_on_file']
+
+label_encoders = {}
+for col in categorical_cols:
+    X[col] = X[col].astype(str) 
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col])
+    label_encoders[col] = le  
+
+X_numeric = X.select_dtypes(include=['number'])
+X[X_numeric.columns] = X_numeric.fillna(X_numeric.median())
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = RandomForestClassifier(random_state=42, n_estimators=100)
+
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Accuracy: {accuracy * 100:.2f}%")
+
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+
+from sklearn.metrics import accuracy_score, confusion_matrix, recall_score, precision_score, f1_score
+import numpy as np
+
+accuracy = accuracy_score(y_test, y_pred)
+
+conf_matrix = confusion_matrix(y_test, y_pred)
+
+recall = recall_score(y_test, y_pred)
+
+precision = precision_score(y_test, y_pred)
+
+f1 = f1_score(y_test, y_pred)
+
+print(f"Accuracy: {accuracy}")
+print(f"Confusion Matrix:\n{conf_matrix}")
+print(f"Recall: {recall}")
+print(f"Precision: {precision}")
+print(f"F1 Score: {f1}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
